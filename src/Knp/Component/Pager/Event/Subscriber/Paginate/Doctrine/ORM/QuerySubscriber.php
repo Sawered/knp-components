@@ -13,6 +13,7 @@ use Doctrine\ORM\Query;
 use Doctrine\ORM\Tools\Pagination\CountWalker as DoctrineCountWalker;
 use Doctrine\ORM\Tools\Pagination\WhereInWalker as DoctrineWhereInWalker;
 use Doctrine\ORM\Tools\Pagination\LimitSubqueryWalker as DoctrineLimitSubqueryWalker;
+use Doctrine\ORM\Query\ResultSetMapping;
 
 class QuerySubscriber implements EventSubscriberInterface
 {
@@ -63,21 +64,36 @@ class QuerySubscriber implements EventSubscriberInterface
                     ->setMaxResults(null)
                 ;
 
-                $conn = $countQuery->getEntityManager()->getConnection();
-                $params = $countQuery->getParameters()->toArray();
 
-                list($types, $params) = array_reduce($params, function ($res, Parameter $par) {
-                    $res[0][] = $par->getType();
-                    $res[1][] = $par->getValue();
+                if ($useDoctrineOutputWalker) {
 
-                    return $res;
-                }, array(array(), array()));
+                    //code borrowed from Doctrine\ORM\Tools\Pagination\Paginator
+                    $platform = $countQuery->getEntityManager()->getConnection()->getDatabasePlatform(); // law of demeter win
 
-                $countResult = $conn
-                    ->executeQuery($countQuery->getSQL(),
-                        $params,
-                        $types)
-                    ->fetchColumn();
+                    $rsm = new ResultSetMapping();
+                    $rsm->addScalarResult($platform->getSQLResultCasing('dctrn_count'), 'count');
+                    $countQuery->setResultSetMapping($rsm);
+
+                    $countResult = $countQuery->getSingleScalarResult();
+                }else{
+                    //this code does'nt work with name-based parameters mapping
+                    //see Query::processParameterMappings
+                    $conn = $countQuery->getEntityManager()->getConnection();
+                    $params = $countQuery->getParameters()->toArray();
+
+                    list($types, $params) = array_reduce($params, function ($res, Parameter $par) {
+                        $res[0][] = $par->getType();
+                        $res[1][] = $par->getValue();
+
+                        return $res;
+                    }, array(array(), array()));
+
+                    $countResult = $conn
+                        ->executeQuery($countQuery->getSQL(),
+                            $params,
+                            $types)
+                        ->fetchColumn();
+                }
 
                 $event->count = intval($countResult);
             }
